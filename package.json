@@ -1,0 +1,51 @@
+{
+  "name": "whoburnedmore",
+  "version": "1.0.0",
+  "description": "🔥 See how many tokens your AI coding agents really burned — a fast, 100% local CLI for Claude Code usage. No account, no upload, nothing leaves your machine.",
+  "type": "module",
+  "bin": {
+    "whoburnedmore": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/cli.js --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "start": "node dist/cli.js",
+    "prepare": "npm run build || true"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "tokens",
+    "token-usage",
+    "ai",
+    "cli",
+    "cost",
+    "llm",
+    "usage",
+    "anthropic"
+  ],
+  "homepage": "https://whoburnedmore.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/amiinwani/whoburnedmore.com.git"
+  },
+  "bugs": {
+    "url": "https://github.com/amiinwani/whoburnedmore.com/issues"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
