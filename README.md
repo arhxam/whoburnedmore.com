@@ -13,7 +13,7 @@
 
 <br>
 
-[![Verify this repo with Claude](https://img.shields.io/badge/%F0%9F%94%8D%20verify%20this%20repo-with%20Claude-000000?style=for-the-badge)][audit]
+[![Verify this repo with Claude](https://img.shields.io/badge/%F0%9F%94%8D%20verify%20this%20repo-with%20Claude-D97757?style=for-the-badge&logo=claude&logoColor=white&labelColor=1a1a1a)][audit]
 
 </div>
 
@@ -43,13 +43,19 @@ npx whoburnedmore
 
 <div align="center">
 
-## 🛡️ Not sure it's safe to run? Have Claude check it first.
+<table>
+<tr><td align="center">
 
-[![▶ Verify this repo with Claude](https://img.shields.io/badge/%F0%9F%94%8D%20VERIFY%20THIS%20REPO%20WITH%20CLAUDE%20%E2%86%92-000000?style=for-the-badge&labelColor=000000)][audit]
+### 🛡️ Not sure it's safe to run? Let Claude read it first.
 
-**[👉 Click to open Claude and audit this repository in one click 👈][audit]**
+<a href="https://claude.ai/new?q=Please%20audit%20this%20open-source%20CLI%20for%20safety%20before%20I%20run%20it%3A%20https%3A%2F%2Fgithub.com%2Farhxam%2Fwhoburnedmore.com%0A%0AIt%20is%20run%20with%20%22npx%20whoburnedmore%22%20and%20reads%20my%20local%20AI%20coding-agent%20usage%20(Claude%20Code%2C%20Codex%2C%20Cursor%2C%20and%20similar%20tools).%20Read%20the%20ACTUAL%20source%20code%20in%20the%20repository%20and%20tell%20me%20plainly%3A%0A%0A1.%20Exactly%20what%20data%20it%20collects%2C%20and%20precisely%20what%20leaves%20my%20machine%20versus%20what%20never%20does.%0A2.%20Every%20network%20endpoint%20or%20server%20it%20contacts.%0A3.%20Whether%20it%20could%20exfiltrate%20my%20source%20code%2C%20prompts%2C%20secrets%2C%20credentials%2C%20tokens%2C%20or%20files.%0A4.%20Any%20supply-chain%2C%20subprocess%2C%20or%20background%20%2F%20auto-update%20risks.%0A%0AThen%20give%20me%20a%20final%20go%20%2F%20no-go%20verdict%3A%20is%20it%20safe%20to%20run%2C%20and%20is%20it%20trying%20to%20steal%20any%20of%20my%20data%3F"><img src="https://img.shields.io/badge/%F0%9F%94%8D%20Verify%20this%20repo%20with%20Claude-D97757?style=for-the-badge&logo=claude&logoColor=white&labelColor=1a1a1a" alt="Verify this repo with Claude" height="46"></a>
 
-<sub>Opens a Claude chat that reads this repo's source and reports exactly what data the CLI collects, what leaves your machine, every server it talks to, and whether it could touch your code, prompts, or secrets — ending with a clear **go / no-go** verdict, *before you run anything.*</sub>
+<sub>One click opens a Claude chat that reads this repo's source and reports exactly what data the CLI collects,<br>what leaves your machine, every server it talks to, and whether it could touch your code, prompts, or secrets<br>— ending with a clear <b>go / no-go</b> verdict, <i>before you run anything.</i></sub>
+
+<sub>💡 Tip: <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>-click to open it in a new tab.</sub>
+
+</td></tr>
+</table>
 
 </div>
 
