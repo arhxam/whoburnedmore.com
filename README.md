@@ -11,6 +11,10 @@
 [![npm downloads](https://img.shields.io/npm/dm/whoburnedmore?color=%23f97316&style=for-the-badge&label=monthly%20downloads)](https://www.npmjs.com/package/whoburnedmore)
 [![Node.js](https://img.shields.io/node/v/whoburnedmore?color=%23333333&style=for-the-badge&label=node)](package.json)
 
+<br>
+
+[![Verify this repo with Claude](https://img.shields.io/badge/%F0%9F%94%8D%20verify%20this%20repo-with%20Claude-000000?style=for-the-badge)][audit]
+
 </div>
 
 <br>
@@ -130,6 +134,12 @@ Run `private` to hide from the leaderboard, `remove` to delete all stored data, 
 
 The `WHOBURNEDMORE_API` environment variable overrides the server endpoint, so you can point the CLI at a self-hosted instance.
 
+> **Don't just take our word for it — get an independent second opinion.**
+>
+> ### 🔍 [Ask Claude to audit this repo before you run it →][audit]
+>
+> One click opens a fresh [Claude](https://claude.ai) chat pre-filled with a prompt that asks it to read this repository's source and report back exactly what data the CLI collects, what leaves your machine (and what never does), every server it talks to, and whether it could exfiltrate your code, prompts, secrets, or files — ending with a clear **go / no-go** verdict on whether it's safe to run.
+
 ---
 
 ## Background sync
@@ -183,3 +193,5 @@ The server, leaderboard, and dashboard are at [whoburnedmore.com](https://whobur
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+[audit]: https://claude.ai/new?q=Please%20audit%20this%20open-source%20CLI%20for%20safety%20before%20I%20run%20it%3A%20https%3A%2F%2Fgithub.com%2Farhxam%2Fwhoburnedmore.com%0A%0AIt%20is%20run%20with%20%22npx%20whoburnedmore%22%20and%20reads%20my%20local%20AI%20coding-agent%20usage%20(Claude%20Code%2C%20Codex%2C%20Cursor%2C%20and%20similar%20tools).%20Read%20the%20ACTUAL%20source%20code%20in%20the%20repository%20and%20tell%20me%20plainly%3A%0A%0A1.%20Exactly%20what%20data%20it%20collects%2C%20and%20precisely%20what%20leaves%20my%20machine%20versus%20what%20never%20does.%0A2.%20Every%20network%20endpoint%20or%20server%20it%20contacts.%0A3.%20Whether%20it%20could%20exfiltrate%20my%20source%20code%2C%20prompts%2C%20secrets%2C%20credentials%2C%20tokens%2C%20or%20files.%0A4.%20Any%20supply-chain%2C%20subprocess%2C%20or%20background%20%2F%20auto-update%20risks.%0A%0AThen%20give%20me%20a%20final%20go%20%2F%20no-go%20verdict%3A%20is%20it%20safe%20to%20run%2C%20and%20is%20it%20trying%20to%20steal%20any%20of%20my%20data%3F
