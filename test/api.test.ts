@@ -3,11 +3,13 @@ import {
   anonRemove,
   anonSubmit,
   anonVisibility,
+  bindDeviceKey,
   boardClaimUrl,
   claimUrl,
   isOpenableUrl,
   isTrustedWebUrl,
   redeemServerInstall,
+  refreshCliToken,
   resolveOpenTarget,
 } from "../src/api.js";
 
@@ -175,6 +177,102 @@ describe("anon visibility + remove", () => {
       ),
     );
     await expect(anonRemove("k".repeat(32))).rejects.toThrow("nope");
+  });
+});
+
+describe("silent CLI token refresh (device-key self-heal)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("POSTs the machine key and returns the fresh token + handle", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ ok: true, token: "fresh-jwt", handle: "alice" }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await refreshCliToken("k".repeat(32));
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toMatch(/\/v1\/auth\/cli\/refresh$/);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ anonKey: "k".repeat(32) });
+    expect(result).toEqual({ token: "fresh-jwt", handle: "alice" });
+  });
+
+  it("returns null (never throws) on an unbound key, a blocked account, or network trouble", async () => {
+    for (const status of [404, 403, 400]) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(JSON.stringify({ error: "nope" }), { status }),
+        ),
+      );
+      expect(await refreshCliToken("k".repeat(32))).toBeNull();
+    }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down");
+      }),
+    );
+    expect(await refreshCliToken("k".repeat(32))).toBeNull();
+  });
+
+  it("returns null on a 200 that carries no token (defensive)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })),
+    );
+    expect(await refreshCliToken("k".repeat(32))).toBeNull();
+  });
+});
+
+describe("device-key bind (rotation-proofing)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("POSTs the key with the bearer token; 200 and 409 are definitive", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: true, alreadyLinked: false }), {
+          status: 200,
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await bindDeviceKey("jwt-token", "k".repeat(32))).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toMatch(/\/v1\/me\/devices\/bind$/);
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      "Bearer jwt-token",
+    );
+    expect(JSON.parse(init.body as string)).toEqual({ anonKey: "k".repeat(32) });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "owned elsewhere" }), {
+            status: 409,
+          }),
+      ),
+    );
+    expect(await bindDeviceKey("jwt-token", "k".repeat(32))).toBe(true);
+  });
+
+  it("returns false on transient failures so a later submit retries", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("bad gateway", { status: 502 })),
+    );
+    expect(await bindDeviceKey("jwt-token", "k".repeat(32))).toBe(false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down");
+      }),
+    );
+    expect(await bindDeviceKey("jwt-token", "k".repeat(32))).toBe(false);
   });
 });
 

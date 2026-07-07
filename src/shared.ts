@@ -534,6 +534,21 @@ export interface SubmitResponse {
    * delisting being silently invisible on the surface people actually use.
    */
   suppressed?: boolean;
+  /**
+   * Days whose total cleared the universal approval ceiling on THIS submit and
+   * are now held off every public ranking pending an operator's approval. Stored
+   * and kept — never dropped. Present only when at least one day was held.
+   */
+  pendingApproval?: string[];
+  /**
+   * Days the anomaly two-key rule removed from every public board on THIS submit
+   * (a severe self-reported spike an independent signal corroborated). The rows
+   * are QUARANTINED, not destroyed — recoverable by an operator or a successful
+   * appeal/verify — so the CLI can tell the user exactly which days were pulled
+   * and how to contest, instead of the removal being silent. Present only when at
+   * least one day was quarantined.
+   */
+  quarantinedDates?: string[];
   /** Set when a `board` code was supplied and the user joined it. */
   boardCode?: string;
   /** Full URL of the friends board, e.g. https://whoburnedmore.com/boards/<code>. */
@@ -796,12 +811,14 @@ export const OrgSelfServeInput = z.object({
 });
 export type OrgSelfServeInput = z.infer<typeof OrgSelfServeInput>;
 
-/** Org admin settings update (PATCH). All fields optional. */
+/** Org admin settings update (PATCH). All fields optional. The logo is NOT
+ *  settable here — it changes only through the upload endpoints, which
+ *  re-encode the image server-side and store it on first-party storage (a raw
+ *  URL field would let an admin point the org mark at an arbitrary host). */
 export const OrgSettingsInput = z.object({
   name: z.string().min(1).max(120).optional(),
   description: z.string().max(2000).nullable().optional(),
   accentColor: HexColor.optional(),
-  logoUrl: z.string().url().max(500).nullable().optional(),
   boardVisibility: OrgBoardVisibility.optional(),
   window: OrgWindow.optional(),
   joinPolicy: OrgJoinPolicy.partial().optional(),
@@ -853,6 +870,11 @@ export interface OrgPublic {
   boardVisibility: OrgBoardVisibility;
   allowCodeJoin?: boolean;
   allowDomainJoin?: boolean;
+  /**
+   * Auto-join email domains. For a members-only (private) board this is
+   * manager-only — publishing it would hand outsiders the exact join vector —
+   * so non-manager viewers get `[]`.
+   */
   emailDomains?: string[];
   /**
    * The org's join password (its `joinCode`) — surfaced publicly so the board's
@@ -862,8 +884,20 @@ export interface OrgPublic {
    */
   joinPassword?: string | null;
   memberCount: number;
+  /**
+   * Aggregate usage across the whole org — the intentionally-public outward
+   * number even for private boards. Zeroed (with `aggregatesHidden: true`)
+   * for very small private orgs, where the org total would effectively BE one
+   * member's personal usage.
+   */
   totalTokens: number;
   totalCostUSD: number;
+  /**
+   * True when the org total is withheld from this viewer (private board with
+   * fewer members than the k-anonymity floor, viewer not a member). UIs show
+   * a placeholder instead of `0`. Optional (back-compat).
+   */
+  aggregatesHidden?: boolean;
   window: { startDate: string | null; endDate: string | null };
   createdAt: string;
 }

@@ -7,6 +7,7 @@ import {
   defaultConfigDir,
   ensureAnonKey,
   loadConfig,
+  recordDeviceBound,
   recordSync,
   recordLaunchNotificationDelivered,
   saveAuth,
@@ -141,6 +142,33 @@ describe("config", () => {
     });
     clearAuth(dir);
     expect(loadConfig(dir)).toEqual({ anonKey: "k".repeat(64), lastSyncAt: 99 });
+  });
+
+  it("recordDeviceBound stamps deviceBoundAt, preserved across clearAuth (a dead token must not lose the binding)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wbm-test-"));
+    saveConfig(dir, {
+      anonKey: "k".repeat(64),
+      cliToken: "tok-123",
+      handle: "bob",
+    });
+    recordDeviceBound(dir, 777);
+    expect(loadConfig(dir)?.deviceBoundAt).toBe(777);
+    // The whole point of the binding is surviving auth loss: clearAuth (the 401
+    // handler) must keep both the key and the bound stamp.
+    clearAuth(dir);
+    expect(loadConfig(dir)).toEqual({
+      anonKey: "k".repeat(64),
+      deviceBoundAt: 777,
+    });
+  });
+
+  it("ignores a non-numeric deviceBoundAt (garbage in config)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wbm-test-"));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({ anonKey: "a".repeat(64), deviceBoundAt: "nope" }),
+    );
+    expect(loadConfig(dir)).toEqual({ anonKey: "a".repeat(64) });
   });
 });
 

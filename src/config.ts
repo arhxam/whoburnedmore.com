@@ -29,6 +29,11 @@ export interface CliConfig {
   lastSyncAt?: number;
   /** Epoch ms after the one-time launch-open desktop notification was delivered. */
   launchNotificationDeliveredAt?: number;
+  /** Epoch ms when this machine's device key got a definitive bind answer from
+   *  the server (`/v1/me/devices/bind`). The binding is what lets a dead bearer
+   *  token self-heal via `/v1/auth/cli/refresh`, so the CLI binds once after
+   *  sign-in / on the first signed-in submit and stamps this to stop re-asking. */
+  deviceBoundAt?: number;
 }
 
 export function defaultConfigDir(): string {
@@ -56,6 +61,12 @@ export function loadConfig(dir: string = defaultConfigDir()): CliConfig | null {
       Number.isFinite(parsed.launchNotificationDeliveredAt)
     ) {
       config.launchNotificationDeliveredAt = parsed.launchNotificationDeliveredAt;
+    }
+    if (
+      typeof parsed.deviceBoundAt === "number" &&
+      Number.isFinite(parsed.deviceBoundAt)
+    ) {
+      config.deviceBoundAt = parsed.deviceBoundAt;
     }
     return Object.keys(config).length > 0 ? config : null;
   } catch {
@@ -117,6 +128,16 @@ export function recordSync(
 ): void {
   const config = loadConfig(dir) ?? {};
   saveConfig(dir, { ...config, lastSyncAt: when });
+}
+
+/** Stamp that the server gave a definitive answer to this machine's device-key
+ *  bind, preserving the rest of the config. */
+export function recordDeviceBound(
+  dir: string = defaultConfigDir(),
+  when: number = Date.now(),
+): void {
+  const config = loadConfig(dir) ?? {};
+  saveConfig(dir, { ...config, deviceBoundAt: when });
 }
 
 export function recordLaunchNotificationDelivered(

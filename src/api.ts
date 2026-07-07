@@ -201,6 +201,56 @@ export async function devicePoll(
 }
 
 /**
+ * Silently mint a fresh CLI bearer token from this machine's device key. The
+ * server only honours a key whose hash is BOUND to an account (the claim /
+ * server-install binding), so this recovers an unattended machine whose stored
+ * token died — e.g. after a server-side JWT secret rotation — without a browser
+ * or a human. Returns null when the machine can't self-heal (key unknown/unbound,
+ * account blocked, network trouble); callers fall back to interactive sign-in.
+ */
+export async function refreshCliToken(
+  anonKey: string,
+): Promise<{ token: string; handle: string } | null> {
+  try {
+    const { status, body } = await post<{
+      ok?: boolean;
+      token?: string;
+      handle?: string;
+    }>("/v1/auth/cli/refresh", { anonKey });
+    if (status === 200 && typeof body.token === "string" && body.token) {
+      return { token: body.token, handle: body.handle ?? "" };
+    }
+  } catch {
+    // Network trouble — self-heal is best-effort; the caller decides what's next.
+  }
+  return null;
+}
+
+/**
+ * Bind this machine's device key to the signed-in account (idempotent). This is
+ * what makes the machine recoverable via `refreshCliToken` after its bearer
+ * token dies — a device-sign-in-only machine otherwise holds nothing the server
+ * can verify. Returns true when the server gave a definitive answer (bound,
+ * already bound, or refused), false on network trouble (worth retrying later).
+ */
+export async function bindDeviceKey(
+  token: string,
+  anonKey: string,
+): Promise<boolean> {
+  try {
+    const { status } = await post<{ ok?: boolean }>(
+      "/v1/me/devices/bind",
+      { anonKey },
+      token,
+    );
+    // 200 bound/already-linked; 409 owned by another account — both definitive.
+    return status === 200 || status === 409;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Submit usage as a SIGNED-IN user: the token authenticates the account, so no
  * key rides in the body and a fabricated POST can't target someone else. Throws
  * `UnauthorizedError` on a 401 so the caller can clear the token and re-sign-in.
@@ -210,11 +260,27 @@ export async function submit(
   payload: SubmitPayload,
 ): Promise<SubmitResponse> {
   const { status, body } = await post<
-    SubmitResponse | { error: string; details?: string[] }
+    | SubmitResponse
+    | { error: string; details?: string[]; reason?: string | null; appealUrl?: string }
   >("/v1/submit", payload, token);
   if (status === 401) throw new UnauthorizedError();
   if (status !== 200) {
-    const err = body as { error: string; details?: string[] };
+    const err = body as {
+      error: string;
+      details?: string[];
+      reason?: string | null;
+      appealUrl?: string;
+    };
+    // A hard block (403) is a dead-end unless we tell the user WHY and WHERE to
+    // contest it. Relay the operator's reason and the appeal link the server
+    // returned, instead of a bare "account blocked".
+    if (status === 403 && err.error === "account blocked") {
+      const reason = err.reason ? `\n  Reason: ${err.reason}` : "";
+      const appeal = err.appealUrl
+        ? `\n  If you think this is a mistake, appeal at: ${err.appealUrl}`
+        : "";
+      throw new Error(`Your account is blocked.${reason}${appeal}`);
+    }
     const details = err.details?.length ? `\n  - ${err.details.join("\n  - ")}` : "";
     throw new Error(`${err.error ?? `submit failed (HTTP ${status})`}${details}`);
   }

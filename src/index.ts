@@ -20,8 +20,10 @@ import {
   anonSubmit,
   anonRemove,
   anonVisibility,
+  bindDeviceKey,
   deviceStart,
   devicePoll,
+  refreshCliToken,
   resolveOpenTarget,
   submit as submitSignedInUsage,
   apiBase,
@@ -51,6 +53,7 @@ import {
   defaultConfigDir,
   ensureAnonKey,
   loadConfig,
+  recordDeviceBound,
   recordLaunchNotificationDelivered,
   recordSync,
   saveAuth,
@@ -284,8 +287,8 @@ async function run(flags: Flags): Promise<void> {
   // server-issued token from the device sign-in flow, so a fabricated POST can
   // no longer land usage on someone's account. Resolution order:
   //   1. a stored CLI token  → authenticated /v1/submit
-  //   2. a legacy/linked device key (server-install or pre-sign-in install)
-  //      → keep the device-key path so existing & headless installs don't break
+  //   2. a bound device key (claim / server-install / post-sign-in bind) → mint
+  //      a fresh token silently, so a dead token never strands a machine
   //   3. fresh machine, a person at the keyboard → sign in first, then submit
   //   4. fresh machine, unattended → stay silent (never prompt, never mint anon)
   const cfg = loadConfig();
@@ -297,6 +300,19 @@ async function run(flags: Flags): Promise<void> {
 
   if (cfg?.cliToken) {
     await submitSignedIn(cfg.cliToken, payload, flags, canSignIn);
+    return;
+  }
+
+  // No stored token. Before involving a human (or giving up in the background),
+  // try the SILENT path: a machine whose device key is bound to an account can
+  // mint a fresh token on its own. This is what resurrects an unattended
+  // background sync whose token died — e.g. a server-side JWT secret rotation
+  // 401'd every machine at once and the 401 handler cleared the stored token —
+  // without anyone touching the machine.
+  const healed = cfg?.anonKey ? await refreshCliToken(cfg.anonKey) : null;
+  if (healed) {
+    saveAuth(undefined, { cliToken: healed.token, handle: healed.handle });
+    await submitSignedIn(healed.token, payload, flags, canSignIn);
   } else if (canSignIn) {
     const auth = await ensureSignedIn();
     if (!auth) return; // sign-in aborted/timed out — nothing submitted
@@ -323,6 +339,16 @@ async function run(flags: Flags): Promise<void> {
 /** Sleep for `ms`. Used to pace device-token polling. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Try the silent device-key token refresh using this machine's stored key. */
+async function refreshCliTokenFromConfig(): Promise<{
+  token: string;
+  handle: string;
+} | null> {
+  const cfg = loadConfig();
+  if (!cfg?.anonKey) return null;
+  return refreshCliToken(cfg.anonKey);
 }
 
 /**
@@ -378,8 +404,11 @@ async function ensureSignedIn(): Promise<{ token: string; handle: string } | nul
 
 /**
  * Submit as a signed-in user via the authenticated /v1/submit path. On a 401 the
- * stored token is expired/invalid: drop it and, if interactive, re-sign-in once
- * and retry; unattended, give up quietly (the next interactive run re-auths).
+ * stored token is expired/invalid: first try the SILENT recovery (mint a fresh
+ * token from this machine's bound device key — survives server-side JWT secret
+ * rotations with zero human involvement), then, if interactive, re-sign-in once
+ * and retry; unattended and unhealable, give up quietly (the next interactive
+ * run re-auths).
  */
 async function submitSignedIn(
   token: string,
@@ -387,16 +416,25 @@ async function submitSignedIn(
   flags: Flags,
   interactive: boolean,
 ): Promise<void> {
+  let activeToken = token;
   let result;
   try {
     result = await submitSignedInUsage(token, payload);
   } catch (err) {
     if (err instanceof UnauthorizedError) {
-      clearAuth();
-      if (!interactive) return; // background can't re-auth — stay silent
-      const auth = await ensureSignedIn();
-      if (!auth) return;
-      result = await submitSignedInUsage(auth.token, payload);
+      const healed = await refreshCliTokenFromConfig();
+      if (healed) {
+        saveAuth(undefined, { cliToken: healed.token, handle: healed.handle });
+        activeToken = healed.token;
+        result = await submitSignedInUsage(healed.token, payload);
+      } else {
+        clearAuth();
+        if (!interactive) return; // background can't re-auth — stay silent
+        const auth = await ensureSignedIn();
+        if (!auth) return;
+        activeToken = auth.token;
+        result = await submitSignedInUsage(auth.token, payload);
+      }
     } else {
       throw err;
     }
@@ -406,6 +444,22 @@ async function submitSignedIn(
     recordSync();
   } catch {
     /* best-effort — never fail a submit over a freshness stamp */
+  }
+
+  // One-time per machine: bind this machine's device key to the account so a
+  // future dead token can self-heal (see the 401 branch above). Machines that
+  // onboarded through the browser device flow hold no server-verifiable secret
+  // without this — a JWT rotation would strand them until a human re-runs the
+  // CLI. Stamped only on a definitive server answer; network blips retry on a
+  // later submit. Never lets a bookkeeping failure break a successful submit.
+  try {
+    const cfgNow = loadConfig();
+    if (!cfgNow?.deviceBoundAt) {
+      const key = ensureAnonKey();
+      if (await bindDeviceKey(activeToken, key)) recordDeviceBound();
+    }
+  } catch {
+    /* best-effort */
   }
 
   // Signed-in users are already on the board, so there's no claim handoff —
@@ -439,6 +493,25 @@ async function submitSignedIn(
       console.log(
         pc.dim(
           "  Run `npx whoburnedmore verify` anytime, or appeal at whoburnedmore.com/appeal.",
+        ),
+      );
+    }
+    // Name any days the anomaly screen pulled off the board on this run. The rows
+    // are kept (recoverable) — this makes the removal visible instead of silent,
+    // so a genuine breakout day the two-key rule caught can be contested.
+    if (result.quarantinedDates && result.quarantinedDates.length > 0) {
+      const days = result.quarantinedDates
+        .map((d) => sanitizeServerText(d))
+        .join(", ");
+      console.log();
+      console.log(
+        pc.yellow(
+          `  ⚠ These day(s) were held off the leaderboard as an anomaly: ${days}`,
+        ),
+      );
+      console.log(
+        pc.dim(
+          "  Your data is kept, not deleted. Run `npx whoburnedmore verify` to get back on the board, or appeal at whoburnedmore.com/appeal to have these days reviewed and restored.",
         ),
       );
     }
@@ -803,7 +876,7 @@ function printHelp(): void {
   ${pc.bold("usage")}
     npx whoburnedmore              sign in, burn + land on the public leaderboard, open your dashboard
     npx whoburnedmore --board=CODE compare with friends — sign in and join their board
-    npx whoburnedmore --org=SLUG   submit to your organization's board (companies/hackathons)
+    npx whoburnedmore --org=SLUG --pass=CODE  join your organization's board (companies/hackathons)
     npx whoburnedmore --local      build the dashboard on your machine and open it (offline)
     npx whoburnedmore --dry-run    print exactly what would be sent, send nothing
     npx whoburnedmore --no-submit  collect locally, send nothing (no dashboard)
