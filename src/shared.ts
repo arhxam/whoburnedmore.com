@@ -4,7 +4,12 @@ import { RESERVED_SUBDOMAINS } from "./tenant.js";
 export * from "./launch-gate.js";
 export * from "./pricing.js";
 
-/** Calendar date in YYYY-MM-DD (UTC). */
+/**
+ * Calendar date in YYYY-MM-DD, in the SUBMITTING MACHINE'S LOCAL timezone —
+ * not UTC. Every reader (native claude/codex, ccusage, cursor) buckets by
+ * local day, `SubmitPayload.tzOffsetMinutes` carries the zone, and the
+ * leaderboard's day windows assume it.
+ */
 export const DateString = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD");
@@ -18,6 +23,7 @@ export const ConnectorProvider = z.enum([
   "openrouter",
   "google-api",
   "cursor",
+  "azure-foundry",
 ]);
 export type ConnectorProvider = z.infer<typeof ConnectorProvider>;
 
@@ -29,6 +35,7 @@ export const UsageOrigin = z.enum([
   "openrouter",
   "google-api",
   "cursor",
+  "azure-foundry",
   "import",
 ]);
 export type UsageOrigin = z.infer<typeof UsageOrigin>;
@@ -474,6 +481,9 @@ export interface BoardMember {
   claimed: boolean;
   /** True if this member is the board's owner. */
   isOwner: boolean;
+  /** True when the member ranks on the board's leaderboard (signed in with at
+   *  least one social). Absent on old API responses — treat missing as true. */
+  listed?: boolean;
 }
 
 export interface BoardResponse {
@@ -484,6 +494,9 @@ export interface BoardResponse {
   createdAt: string;
   /** Full roster, owner first. Optional (back-compat with the pre-redesign shape). */
   members?: BoardMember[];
+  /** Soft-deleted tombstone: 200-cacheable so stale caches can be replaced;
+   *  clients treat it as not-found. Absent on live boards. */
+  archived?: boolean;
 }
 
 /** One board in a signed-in user's "your boards" list. */

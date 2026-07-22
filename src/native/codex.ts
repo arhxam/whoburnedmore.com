@@ -14,11 +14,12 @@
  * As with Claude, this is split into a PURE core the tests drive
  * (`parseCodexRollout`, `aggregateCodexSessions`) and a filesystem wrapper.
  */
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { DailyUsageEntry } from "../shared.js";
 import { estimateCostUSD } from "../pricing.js";
+import { nativeCachePath, readFilesWithCache } from "./file-cache.js";
 
 function num(n: unknown): number {
   const v = Math.round(Number(n));
@@ -177,12 +178,12 @@ interface CodexBucket {
 /** Running per-(date,model) accumulator across streamed sessions. */
 export type CodexAccumulator = Map<string, CodexBucket>;
 
-/** Parse one session's lines and fold its per-day records into an accumulator. */
-export function accumulateCodexSession(
+/** Fold already-parsed per-day session records into an accumulator. */
+export function foldCodexSessions(
   acc: CodexAccumulator,
-  lines: Iterable<string>,
+  sessions: Iterable<CodexSession>,
 ): void {
-  for (const s of parseCodexRollout(lines)) {
+  for (const s of sessions) {
     const k = `${s.date}|${s.model}`;
     let b = acc.get(k);
     if (!b) {
@@ -203,6 +204,14 @@ export function accumulateCodexSession(
     b.cacheReadTokens += s.cacheReadTokens;
     b.requestCount += s.turnCount;
   }
+}
+
+/** Parse one session's lines and fold its per-day records into an accumulator. */
+export function accumulateCodexSession(
+  acc: CodexAccumulator,
+  lines: Iterable<string>,
+): void {
+  foldCodexSessions(acc, parseCodexRollout(lines));
 }
 
 /** Group a Codex accumulator into per-(date,model) daily entries. */
@@ -279,40 +288,85 @@ export interface NativeCollectResult {
   timedOut?: boolean;
 }
 
-/** Wall-clock budget for the whole native Codex read (see claude.ts). */
-export const NATIVE_READ_BUDGET_MS = 20_000;
+/** Wall-clock budget for the whole native Codex read (see claude.ts — with the
+ *  per-file cache this effectively gates only the cold first pass). */
+export const NATIVE_READ_BUDGET_MS = 45_000;
+
+/** Bump when parse semantics change — invalidates the per-file cache. */
+const CODEX_CACHE_VERSION = 1;
 
 /**
- * Read every Codex rollout on disk and aggregate it. Best effort, and memory-
- * and time-bounded: each rollout is read, parsed, and folded into a per-session
- * accumulator ONE AT A TIME (peak memory = one rollout + the small per-day map,
- * not every rollout at once — Codex `~/.codex/sessions` is hundreds of MB), and
- * the read abandons on a wall-clock budget, returning `found:false` so the
- * caller falls back to ccusage rather than hanging or OOM-crashing the run.
+ * Compact per-file cache row: [date, model, in, out, cacheCreate, cacheRead,
+ * turnCount] — one per active day of the session that file holds.
+ */
+type CachedSession = [string, string, number, number, number, number, number];
+
+function toCachedSession(s: CodexSession): CachedSession {
+  return [
+    s.date,
+    s.model,
+    s.inputTokens,
+    s.outputTokens,
+    s.cacheCreationTokens,
+    s.cacheReadTokens,
+    s.turnCount,
+  ];
+}
+
+function fromCachedSession(t: CachedSession): CodexSession {
+  return {
+    date: t[0],
+    model: t[1],
+    inputTokens: t[2],
+    outputTokens: t[3],
+    cacheCreationTokens: t[4],
+    cacheReadTokens: t[5],
+    turnCount: t[6],
+  };
+}
+
+/**
+ * Read every Codex rollout on disk and aggregate it. Best effort, memory-
+ * bounded (one rollout at a time), and incremental via the persistent per-file
+ * cache: a rollout is one session file whose per-day records fold additively,
+ * so caching each file's parsed records is exactly equivalent to re-parsing it.
+ * Unchanged (size, mtime) files are never re-read; on budget exhaustion the
+ * progress persists and `found:false` keeps the abandon-to-ccusage semantics
+ * (see claude.ts for the full rationale). `filesScanned` counts files actually
+ * READ this run.
  */
 export async function collectCodexNative(
   env = process.env,
-  opts: { budgetMs?: number; now?: () => number } = {},
+  opts: { budgetMs?: number; now?: () => number; cachePath?: string } = {},
 ): Promise<NativeCollectResult> {
   const dir = resolveCodexSessionsDir(env);
   const files = await listJsonl(dir);
   if (files.length === 0) return { entries: [], found: false, filesScanned: 0 };
   const now = opts.now ?? Date.now;
-  const deadline = now() + (opts.budgetMs ?? NATIVE_READ_BUDGET_MS);
-  const acc: CodexAccumulator = new Map();
-  let scanned = 0;
-  for (const f of files) {
-    if (now() > deadline) {
-      return { entries: [], found: false, filesScanned: scanned, timedOut: true };
-    }
-    let content: string;
-    try {
-      content = await readFile(f, "utf8");
-    } catch {
-      continue; // skip unreadable file
-    }
-    accumulateCodexSession(acc, splitLines(content));
-    scanned += 1;
+  const res = await readFilesWithCache<CachedSession>({
+    files,
+    cachePath: opts.cachePath ?? nativeCachePath("codex", env),
+    version: CODEX_CACHE_VERSION,
+    parseFile: (content) =>
+      parseCodexRollout(splitLines(content)).map(toCachedSession),
+    deadline: now() + (opts.budgetMs ?? NATIVE_READ_BUDGET_MS),
+    now,
+  });
+  if (!res.itemsByFile) {
+    return {
+      entries: [],
+      found: false,
+      filesScanned: res.filesRead,
+      timedOut: true,
+    };
   }
-  return { entries: finalizeCodexEntries(acc), found: true, filesScanned: scanned };
+  const acc: CodexAccumulator = new Map();
+  for (const items of res.itemsByFile) {
+    foldCodexSessions(acc, items.map(fromCachedSession));
+  }
+  return {
+    entries: finalizeCodexEntries(acc),
+    found: true,
+    filesScanned: res.filesRead,
+  };
 }

@@ -104,7 +104,10 @@ export function mapCursorEvents(events: CursorEvent[]): {
     const ms = Number(e.timestamp);
     if (!tu || !Number.isFinite(ms)) continue;
     const d = new Date(ms);
-    const date = d.toISOString().slice(0, 10);
+    // Bucket by LOCAL calendar day, matching the native readers and ccusage —
+    // a UTC slice here put late-evening usage on tomorrow's row for anyone
+    // east of UTC, splitting the same physical day across two board days.
+    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     const model = e.model || "cursor";
     const input = num(tu.inputTokens);
     const output = num(tu.outputTokens);

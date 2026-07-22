@@ -126,8 +126,12 @@ export function collectCursorViaTokscale(
   if (!bin) return [];
 
   const today = new Date();
-  const day = (offset: number) =>
-    new Date(today.getTime() - offset * 86_400_000).toISOString().slice(0, 10);
+  // LOCAL calendar days, matching the native readers' bucketing — a UTC slice
+  // asks tokscale for the wrong day (and labels rows with it) east of UTC.
+  const day = (offset: number) => {
+    const d = new Date(today.getTime() - offset * 86_400_000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
 
   // Probe today first; if there's no Cursor data at all, don't spawn 30 more.
   if (mapTokscaleDay(day(0), runTokscaleDay(bin, day(0))).length === 0) {

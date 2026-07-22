@@ -206,14 +206,28 @@ describe("collectClaudeNative — streaming + wall-clock budget", () => {
       join(proj, "s.jsonl"),
       assistantLine({ ts: "2026-06-10T12:00:00Z", model: "claude-opus-4-8", reqId: "r1", msgId: "m1", output: 100 }) + "\n",
     );
-    const env = { CLAUDE_CONFIG_DIR: dir } as NodeJS.ProcessEnv;
+    // Point the per-file cache at the temp dir too, so the test never touches
+    // the real config dir.
+    const env = {
+      CLAUDE_CONFIG_DIR: dir,
+      WHOBURNEDMORE_CONFIG_DIR: dir,
+    } as NodeJS.ProcessEnv;
     try {
       const ok = await collectClaudeNative(env, { budgetMs: 5000 });
       expect(ok.found).toBe(true);
       expect(ok.entries[0].outputTokens).toBe(100);
       expect(ok.entries[0].requestCount).toBe(1);
-      // Already-expired budget → abandon to the ccusage fallback, never crash/partial.
-      const out = await collectClaudeNative(env, { budgetMs: -1 });
+      // Expired budget + WARM cache: cache hits are free, so the read still
+      // completes — the budget only gates actual file reads now.
+      const warm = await collectClaudeNative(env, { budgetMs: -1 });
+      expect(warm.found).toBe(true);
+      expect(warm.entries[0].outputTokens).toBe(100);
+      // Expired budget + COLD cache → abandon to the ccusage fallback, never
+      // crash or submit a partial corpus.
+      const out = await collectClaudeNative(env, {
+        budgetMs: -1,
+        cachePath: join(dir, "cold-cache.json"),
+      });
       expect(out.found).toBe(false);
       expect(out.timedOut).toBe(true);
       expect(out.entries).toEqual([]);

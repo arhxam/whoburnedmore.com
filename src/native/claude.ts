@@ -28,6 +28,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { DailyUsageEntry } from "../shared.js";
 import { estimateCostUSD } from "../pricing.js";
+import { nativeCachePath, readFilesWithCache } from "./file-cache.js";
 
 /** One deduped provider request extracted from a transcript line. */
 export interface ParsedRequest {
@@ -277,12 +278,73 @@ export interface NativeCollectResult {
 }
 
 /**
- * Wall-clock budget for the whole native Claude read. Kept just under ccusage's
- * per-source 25s timeout so that, on a machine where the corpus is too large to
- * read in time, the native path bows out and the existing ccusage fallback runs
- * instead of the run hanging. Tunable for tests.
+ * Wall-clock budget for the whole native Claude read. With the persistent
+ * per-file cache a steady-state run only reads the files that changed since the
+ * last run (seconds even under launchd Background throttling), so this budget
+ * effectively gates only the COLD first pass over a big corpus. It was 20s,
+ * which a multi-GB corpus chronically blew on every 15-minute background tick —
+ * the source then silently dropped out of the payload run after run and heavy
+ * users' day-rows were born hours late (the daily-board "missing people" bug).
+ * 45s makes a one-shot cold build succeed on most machines; a corpus too big
+ * even for that still converges, because progress persists across ticks.
  */
-export const NATIVE_READ_BUDGET_MS = 20_000;
+export const NATIVE_READ_BUDGET_MS = 45_000;
+
+/** Bump when parse/dedup semantics change — invalidates the per-file cache. */
+const CLAUDE_CACHE_VERSION = 1;
+
+/**
+ * Compact per-file cache row: [key, hasRealId, date, model, in, out, cacheCreate,
+ * cacheRead]. Tuples (not objects) keep the on-disk cache several times smaller.
+ */
+type CachedRequest = [string, 0 | 1, string, string, number, number, number, number];
+
+function toCached(r: ParsedRequest): CachedRequest {
+  return [
+    r.key,
+    r.hasRealId ? 1 : 0,
+    r.date,
+    r.model,
+    r.inputTokens,
+    r.outputTokens,
+    r.cacheCreationTokens,
+    r.cacheReadTokens,
+  ];
+}
+
+function fromCached(t: CachedRequest): ParsedRequest {
+  return {
+    key: t[0],
+    hasRealId: t[1] === 1,
+    date: t[2],
+    ts: 0,
+    model: t[3],
+    inputTokens: t[4],
+    outputTokens: t[5],
+    cacheCreationTokens: t[6],
+    cacheReadTokens: t[7],
+  };
+}
+
+/**
+ * Parse ONE file's lines into its deduped request rows for the cache. Synthetic
+ * keys (lines with no provider ids) are re-minted as file-scoped ids: the
+ * module-level counter restarts every process, so cached synthetic keys from a
+ * previous run would collide with a new run's and be wrongly merged by the
+ * cross-file max-wins dedup. `<path>` is unique per file and the index is
+ * deterministic per parse, so these keys never collide and (like the original
+ * global counter) never dedup across files.
+ */
+function parseFileToCache(content: string, path: string): CachedRequest[] {
+  const acc: ClaudeAccumulator = new Map();
+  accumulateClaudeLines(acc, splitLines(content));
+  let synIndex = 0;
+  return [...acc.values()].map((r) =>
+    toCached(
+      r.hasRealId ? r : { ...r, key: `synthetic|${path}|${(synIndex += 1)}` },
+    ),
+  );
+}
 
 function* splitLines(content: string): Generator<string> {
   let start = 0;
@@ -300,15 +362,20 @@ function* splitLines(content: string): Generator<string> {
  * unreadable file is skipped, and a missing config dir yields `found:false` so
  * the caller can fall back to ccusage.
  *
- * Memory- and time-bounded: files are read ONE AT A TIME and folded into a
- * shared dedup accumulator (peak memory = one file + the deduped request set,
- * NOT the whole corpus), and the read abandons on a wall-clock budget. On
- * timeout it returns `found:false` so the caller falls back to ccusage rather
- * than submitting a partial (undercounted) total — and never OOM-crashes the run.
+ * Incremental via the persistent per-file cache: transcripts are append-only,
+ * so files whose (size, mtime) are unchanged reuse their cached parse and only
+ * new/changed files are read — steady state is "today's active sessions", not
+ * the whole corpus. The wall-clock budget therefore effectively gates only the
+ * cold first pass; on timeout, progress is PERSISTED (a later run resumes and
+ * completes) and `found:false` keeps the abandon-to-ccusage semantics — a
+ * partial corpus is never submitted (recent days would be overwritten with an
+ * undercount). Cross-file fork dedup is preserved because per-file rows are
+ * merged max-wins by (message.id, requestId) exactly as the uncached read did.
+ * `filesScanned` now counts files actually READ this run (cache hits are free).
  */
 export async function collectClaudeNative(
   env = process.env,
-  opts: { budgetMs?: number; now?: () => number } = {},
+  opts: { budgetMs?: number; now?: () => number; cachePath?: string } = {},
 ): Promise<NativeCollectResult> {
   const dirs = resolveClaudeProjectDirs(env);
   const files: string[] = [];
@@ -316,24 +383,37 @@ export async function collectClaudeNative(
   if (files.length === 0) return { entries: [], found: false, filesScanned: 0 };
 
   const now = opts.now ?? Date.now;
-  const deadline = now() + (opts.budgetMs ?? NATIVE_READ_BUDGET_MS);
-  const acc: ClaudeAccumulator = new Map();
-  let scanned = 0;
-  for (const f of files) {
-    if (now() > deadline) {
-      return { entries: [], found: false, filesScanned: scanned, timedOut: true };
-    }
-    let content: string;
-    try {
-      content = await readFile(f, "utf8");
-    } catch {
-      continue; // skip unreadable file
-    }
-    accumulateClaudeLines(acc, splitLines(content));
-    scanned += 1;
-    // `content` is now unreferenced and collectable before the next file.
+  const res = await readFilesWithCache<CachedRequest>({
+    files,
+    cachePath: opts.cachePath ?? nativeCachePath("claude", env),
+    version: CLAUDE_CACHE_VERSION,
+    parseFile: parseFileToCache,
+    deadline: now() + (opts.budgetMs ?? NATIVE_READ_BUDGET_MS),
+    now,
+  });
+  if (!res.itemsByFile) {
+    return {
+      entries: [],
+      found: false,
+      filesScanned: res.filesRead,
+      timedOut: true,
+    };
   }
-  return { entries: finalizeClaudeEntries(acc), found: true, filesScanned: scanned };
+  // Cross-file dedup: forked/duplicated sessions repeat (message.id, requestId)
+  // pairs across files; keep the maximal-token occurrence, same as before.
+  const acc: ClaudeAccumulator = new Map();
+  for (const items of res.itemsByFile) {
+    for (const t of items) {
+      const r = fromCached(t);
+      const prev = acc.get(r.key);
+      if (!prev || reqTokens(r) > reqTokens(prev)) acc.set(r.key, r);
+    }
+  }
+  return {
+    entries: finalizeClaudeEntries(acc),
+    found: true,
+    filesScanned: res.filesRead,
+  };
 }
 
 /**

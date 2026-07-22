@@ -547,7 +547,19 @@ async function submitSignedIn(
  * background-sync status footer. Best-effort — never fails an already-good submit.
  */
 function afterSubmitChores(flags: Flags): void {
-  if (flags.quiet) return;
+  if (flags.quiet) {
+    // Background ticks must self-heal drift too (stale node path, changed
+    // interval) — a machine that only ever runs via launchd would otherwise
+    // stay broken until a manual foreground run that may never come. But never
+    // INSTALL from a quiet run: cron/daemon-driven syncs on machines that
+    // never opted into the launchd agent must not sprout one.
+    try {
+      if (autoSyncInstalled()) reconcileAutoSync();
+    } catch {
+      // ignore — best-effort, the submit already succeeded.
+    }
+    return;
+  }
   try {
     reconcileAutoSync();
   } catch {
@@ -662,6 +674,15 @@ async function runDaemon(): Promise<void> {
     runOnce: async () => {
       rotateLogIfLarge();
       await run({ dryRun: false, noSubmit: false, local: false, quiet: true });
+      // A quiet run on an unlinked machine no-ops silently by design (never
+      // prompt, never submit unauthenticated) — but the daemon must not log
+      // that as "synced" forever. No stored token after the run means nothing
+      // was (or could be) submitted: say so instead of faking success.
+      if (!loadConfig()?.cliToken) {
+        throw new Error(
+          "not linked — nothing submitted (run `npx whoburnedmore link --token=…` from your signed-in profile first)",
+        );
+      }
     },
   });
 

@@ -1,6 +1,6 @@
 {
   "name": "whoburnedmore",
-  "version": "0.9.12",
+  "version": "0.9.13",
   "description": "Find out who burned more — submit your AI coding-agent token usage to the public leaderboard at whoburnedmore.com",
   "type": "module",
   "bin": {
@@ -31,14 +31,14 @@
     "node": ">=20"
   },
   "license": "MIT",
-  "author": "whoburnedmore <132888838+amiinwani@users.noreply.github.com>",
+  "author": "whoburnedmore <132888838+arhxam@users.noreply.github.com>",
   "homepage": "https://whoburnedmore.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/amiinwani/whoburnedmore.com.git"
+    "url": "git+https://github.com/arhxam/whoburnedmore.git"
   },
   "bugs": {
-    "url": "https://github.com/amiinwani/whoburnedmore.com/issues"
+    "url": "https://github.com/arhxam/whoburnedmore/issues"
   },
   "keywords": [
     "ai",

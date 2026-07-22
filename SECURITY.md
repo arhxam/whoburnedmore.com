@@ -32,5 +32,5 @@ file paths. `--dry-run` prints the exact payload; `--local` uploads nothing at a
 
 ## Reporting a vulnerability
 Please report privately via **GitHub Security Advisories**
-(<https://github.com/amiinwani/whoburnedmore.com/security/advisories/new>) rather than a
+(<https://github.com/arhxam/whoburnedmore/security/advisories/new>) rather than a
 public issue. We aim to respond quickly.
