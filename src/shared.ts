@@ -320,6 +320,13 @@ export interface LeaderboardRow {
   /** Last 7 days of token totals, oldest first, for sparklines. */
   spark7d: number[];
   lastSubmittedAt: string | null;
+  /**
+   * When this member's token total last actually grew — distinct from
+   * lastSubmittedAt (last sync, bumped by every 15-minute heartbeat). Drives the
+   * "coding" vs "last coded" status. Optional/null for back-compat and for
+   * accounts that haven't had a token-increasing submit yet.
+   */
+  lastCodedAt?: string | null;
 }
 
 export interface LeaderboardResponse {
@@ -470,6 +477,13 @@ export interface UserProfileResponse {
     costUSD: number;
   }>;
   lastSubmittedAt: string | null;
+  /**
+   * When this account's token total last grew (its most recent real coding
+   * session), as opposed to lastSubmittedAt (last background sync). Powers the
+   * profile's "coding · synced Xm ago" / "last coded Xh ago" status line.
+   * Optional/null for back-compat and pre-first-code accounts.
+   */
+  lastCodedAt?: string | null;
 }
 
 /** One member shown on a board's roster. */
